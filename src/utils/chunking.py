@@ -25,6 +25,13 @@ def chunk_text(
     """
     if not text or chunk_size <= 0:
         return []
+    
+    # Validate chunk_overlap
+    if chunk_overlap < 0:
+        chunk_overlap = 0
+    if chunk_overlap >= chunk_size:
+        logger.warning(f"chunk_overlap ({chunk_overlap}) >= chunk_size ({chunk_size}), setting overlap to 0")
+        chunk_overlap = 0
 
     # First split by separator (paragraphs, sections, etc.)
     splits = text.split(separator)

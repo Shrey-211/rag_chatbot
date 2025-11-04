@@ -4,24 +4,31 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      # Enable BuildKit cache for faster builds
-      cache_from:
-        - rag-chatbot-rag-api:latest
+      target: development
     image: rag-chatbot-rag-api:latest
     ports:
       - "8000:8000"
     environment:
+      # LLM Configuration
       - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama2}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2:1b}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      # Embedding Configuration
       - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-local}
+      # Vector Store Configuration
       - VECTORSTORE_PROVIDER=${VECTORSTORE_PROVIDER:-chroma}
       - VECTORSTORE_PERSIST_PATH=/app/data/chroma
+      # Database Configuration
+      - DATABASE_PATH=/app/data/documents.db
     volumes:
+      # Persistent data (vector store + document database)
       - ./data:/app/data
-      # Development: Mount source code for live reload (comment out for production)
+      # Source code for hot reload
       - ./src:/app/src
       - ./api:/app/api
+      # Config file (will use config.example.yaml from container if not present)
+      - ./config.yaml:/app/config.yaml
     depends_on:
       - chroma
     extra_hosts:
@@ -29,6 +36,12 @@ services:
     networks:
       - rag-network
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   # ChromaDB vector store
   chroma:
@@ -40,6 +53,28 @@ services:
     environment:
       - IS_PERSISTENT=TRUE
       - ANONYMIZED_TELEMETRY=FALSE
+    networks:
+      - rag-network
+    restart: unless-stopped
+
+  # React Web Dashboard (Optional - for development)
+  webapp:
+    build:
+      context: ./webapp
+      dockerfile: Dockerfile
+      target: development
+    image: rag-chatbot-webapp:latest
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_BASE_URL=http://localhost:8000
+    volumes:
+      # Development: Mount source for hot reload
+      - ./webapp/src:/app/src
+      - ./webapp/index.html:/app/index.html
+      - ./webapp/public:/app/public
+    depends_on:
+      - rag-api
     networks:
       - rag-network
     restart: unless-stopped

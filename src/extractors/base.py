@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -11,7 +11,7 @@ class ExtractedDocument:
     """Standardized document extraction result."""
 
     content: str
-    metadata: Dict[str, any]
+    metadata: Dict[str, Any]
     source: str
 
 
@@ -48,7 +48,7 @@ class DocumentExtractor(ABC):
         """
         pass
 
-    def get_file_info(self, file_path: str) -> Dict[str, any]:
+    def get_file_info(self, file_path: str) -> Dict[str, Any]:
         """Get basic file information.
 
         Args:

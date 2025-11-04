@@ -1,6 +1,7 @@
 """FastAPI main application."""
 
 import hashlib
+import json
 import logging
 import uuid
 from contextlib import asynccontextmanager
@@ -8,11 +9,13 @@ from pathlib import Path
 from typing import Optional
 
 import httpx
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
 
+from api.database import DocumentDatabase
 from api.models import (
+    DocumentInfo,
+    DocumentListResponse,
     HealthResponse,
     IndexRequest,
     IndexResponse,
@@ -48,6 +51,7 @@ embedding_adapter: Optional[EmbeddingAdapter] = None
 vector_store: Optional[VectorStore] = None
 retriever: Optional[Retriever] = None
 extractor_factory: Optional[ExtractorFactory] = None
+doc_database: Optional[DocumentDatabase] = None
 
 
 def create_llm_adapter(config) -> LLMAdapter:
@@ -124,11 +128,15 @@ def create_vector_store(config, embedding_dim: int) -> VectorStore:
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown."""
     # Startup
-    global llm_adapter, embedding_adapter, vector_store, retriever, extractor_factory
+    global llm_adapter, embedding_adapter, vector_store, retriever, extractor_factory, doc_database
 
     logger.info("Starting RAG application...")
 
     config = get_config()
+
+    # Initialize document database
+    doc_database = DocumentDatabase()
+    await doc_database.initialize()
 
     # Initialize adapters
     llm_adapter = create_llm_adapter(config)
@@ -156,6 +164,14 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down RAG application...")
     if vector_store:
         vector_store.persist()
+    if doc_database:
+        await doc_database.close()
+    # Close HTTP clients if they have close methods
+    if llm_adapter and hasattr(llm_adapter, 'client') and hasattr(llm_adapter.client, 'close'):
+        try:
+            llm_adapter.client.close()
+        except Exception as e:
+            logger.warning(f"Error closing LLM adapter client: {e}")
 
 
 # Create FastAPI app
@@ -220,6 +236,10 @@ async def query(request: QueryRequest):
     if not retriever or not llm_adapter:
         raise HTTPException(status_code=503, detail="Service not initialized")
 
+    # Validate query
+    if not request.query or not request.query.strip():
+        raise HTTPException(status_code=400, detail="Query cannot be empty")
+
     try:
         # Retrieve relevant documents
         results = retriever.retrieve(query=request.query, top_k=request.top_k)
@@ -282,19 +302,34 @@ async def index_document(request: IndexRequest):
             content = request.text
             doc_id = hashlib.md5(content.encode()).hexdigest()
         elif request.url:
+            # Validate URL
+            if not request.url.startswith(("http://", "https://")):
+                raise HTTPException(status_code=400, detail="Invalid URL scheme. Must be http:// or https://")
+            
             # Fetch URL content
-            async with httpx.AsyncClient() as client:
-                response = await client.get(request.url)
-                response.raise_for_status()
-                content = response.text
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                try:
+                    response = await client.get(request.url)
+                    response.raise_for_status()
+                    content = response.text
+                except httpx.HTTPError as e:
+                    raise HTTPException(status_code=400, detail=f"Failed to fetch URL: {str(e)}")
             doc_id = hashlib.md5(request.url.encode()).hexdigest()
         else:
+            # This should not happen due to model validation, but keep as safety check
             raise HTTPException(status_code=400, detail="Either text or url must be provided")
+
+        # Validate content
+        if not content or not content.strip():
+            raise HTTPException(status_code=400, detail="Content is empty")
 
         # Chunk content
         chunks = chunk_text(
             content, chunk_size=config.chunk_size, chunk_overlap=config.chunk_overlap
         )
+
+        if not chunks:
+            raise HTTPException(status_code=400, detail="No valid chunks created from content")
 
         # Create IDs and metadata
         chunk_ids = [f"{doc_id}_{i}" for i in range(len(chunks))]
@@ -316,6 +351,14 @@ async def index_document(request: IndexRequest):
 
         vector_store.persist()
 
+        # Save to document database
+        await doc_database.add_document(
+            document_id=doc_id,
+            num_chunks=len(chunks),
+            source=request.metadata.get("source") if request.metadata else None,
+            metadata_json=json.dumps(request.metadata) if request.metadata else None,
+        )
+
         return IndexResponse(
             success=True,
             document_id=doc_id,
@@ -335,11 +378,20 @@ async def index_file(file: UploadFile = File(...)):
         raise HTTPException(status_code=503, detail="Service not initialized")
 
     try:
+        # Validate filename
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="Filename is required")
+        
+        # Sanitize filename to prevent path traversal
+        safe_filename = Path(file.filename).name
+        if not safe_filename or safe_filename in (".", ".."):
+            raise HTTPException(status_code=400, detail="Invalid filename")
+        
         # Save uploaded file temporarily
         upload_dir = Path("data/uploads")
         upload_dir.mkdir(parents=True, exist_ok=True)
 
-        file_path = upload_dir / f"{uuid.uuid4()}_{file.filename}"
+        file_path = upload_dir / f"{uuid.uuid4()}_{safe_filename}"
         with open(file_path, "wb") as f:
             content = await file.read()
             f.write(content)
@@ -351,6 +403,10 @@ async def index_file(file: UploadFile = File(...)):
             # Clean up temp file
             file_path.unlink(missing_ok=True)
 
+        # Validate extracted content
+        if not extracted.content or not extracted.content.strip():
+            raise HTTPException(status_code=400, detail="File contains no extractable text content")
+
         # Chunk content
         chunks = chunk_text(
             extracted.content,
@@ -358,13 +414,16 @@ async def index_file(file: UploadFile = File(...)):
             chunk_overlap=config.chunk_overlap,
         )
 
+        if not chunks:
+            raise HTTPException(status_code=400, detail="No valid chunks created from file content")
+
         # Create IDs and metadata
-        doc_id = hashlib.md5(file.filename.encode()).hexdigest()
+        doc_id = hashlib.md5(safe_filename.encode()).hexdigest()
         chunk_ids = [f"{doc_id}_{i}" for i in range(len(chunks))]
 
         metadatas = []
         for i in range(len(chunks)):
-            meta = extracted.metadata.copy()
+            meta = extracted.metadata.copy() if extracted.metadata else {}
             meta["chunk_index"] = i
             meta["total_chunks"] = len(chunks)
             meta["document_id"] = doc_id
@@ -378,15 +437,70 @@ async def index_file(file: UploadFile = File(...)):
 
         vector_store.persist()
 
+        # Save to document database
+        await doc_database.add_document(
+            document_id=doc_id,
+            num_chunks=len(chunks),
+            filename=safe_filename,
+            content_type=file.content_type,
+            metadata_json=json.dumps(extracted.metadata) if extracted.metadata else None,
+        )
+
         return IndexResponse(
             success=True,
             document_id=doc_id,
             num_chunks=len(chunks),
-            message=f"Successfully indexed file: {file.filename}",
+            message=f"Successfully indexed file: {safe_filename}",
         )
 
     except Exception as e:
         logger.error(f"File index error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/documents", response_model=DocumentListResponse)
+async def list_documents(
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+):
+    """List all indexed documents with metadata.
+    
+    Args:
+        limit: Maximum number of documents to return (1-1000)
+        offset: Number of documents to skip
+    
+    Returns:
+        List of documents with metadata
+    """
+    if not doc_database:
+        raise HTTPException(status_code=503, detail="Database not initialized")
+
+    try:
+        documents = await doc_database.list_documents(limit=limit, offset=offset)
+        total = await doc_database.count_documents()
+
+        doc_list = [
+            DocumentInfo(
+                document_id=doc.document_id,
+                filename=doc.filename,
+                content_type=doc.content_type,
+                source=doc.source,
+                num_chunks=doc.num_chunks,
+                indexed_at=doc.indexed_at,
+                metadata=json.loads(doc.metadata_json) if doc.metadata_json else None,
+            )
+            for doc in documents
+        ]
+
+        return DocumentListResponse(
+            documents=doc_list,
+            total=total,
+            limit=limit,
+            offset=offset,
+        )
+
+    except Exception as e:
+        logger.error(f"List documents error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

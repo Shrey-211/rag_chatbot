@@ -63,9 +63,9 @@ cd rag_chatbot
 # Install dependencies
 pip install -r requirements.txt
 
-# Setup configuration
-cp .env.example .env
-cp config.example.yaml config.yaml
+# Configuration is ready! (Uses mock LLM by default for instant testing)
+# config.yaml already exists with sensible defaults
+# To use real AI later, edit config.yaml and switch to ollama or openai
 
 # Create directories
 mkdir -p data/sample data/chroma
@@ -114,6 +114,40 @@ curl -X POST http://localhost:8000/query \
   -d '{"query": "What is machine learning?", "top_k": 3}'
 ```
 
+## 🧪 Test the API with Postman
+
+- Import the collection at `docs/rag_chatbot_postman_collection.json` into Postman (File → Import).
+- Set the `baseUrl` collection variable if your FastAPI server is not on `http://localhost:8000`.
+- Use the provided requests to verify health, inspect stats, index text or files, and run chat queries.
+
+## 🌐 React Operations Dashboard
+
+A lightweight Vite + React frontend lives in `webapp/`. It lets you upload files, view the last indexed documents, and chat against the RAG pipeline.
+
+### Prerequisites
+
+- Node.js 18+ and npm (or Yarn / pnpm).
+
+### Run in Development
+
+```bash
+cd webapp
+npm install
+cp env.example .env    # Optional: override the API base URL
+npm run dev
+```
+
+By default, the app proxies requests to `http://localhost:8000`. Update `VITE_API_BASE_URL` in `.env` if your API runs elsewhere.
+
+### Build for Production
+
+```bash
+npm run build
+npm run preview   # Serves the production bundle locally
+```
+
+You can deploy the contents of `webapp/dist` behind any static site host (Vercel, Netlify, S3, etc.). Ensure the API endpoint is reachable and CORS is configured to allow the frontend origin.
+
 ## 🐳 Docker Quick Start
 
 ```bash
@@ -137,18 +171,29 @@ curl -X POST http://localhost:8000/query \
 
 ### LLM Providers
 
+**Default: Mock LLM (No setup)**:
+Already configured! Perfect for testing. Returns dummy responses instantly.
+
 **Ollama (Local, Free)**:
-```env
-LLM_PROVIDER=ollama
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=llama2
+```bash
+# 1. Install Ollama from https://ollama.ai
+# 2. Pull a model
+ollama pull llama3.2:1b  # Fast, small (1.3GB)
+
+# 3. Edit config.yaml
+llm:
+  provider: "ollama"  # Change from "mock"
 ```
 
 **OpenAI (Cloud)**:
-```env
-LLM_PROVIDER=openai
-OPENAI_API_KEY=sk-your-key-here
-OPENAI_MODEL=gpt-3.5-turbo
+```bash
+# 1. Get API key from https://platform.openai.com/api-keys
+# 2. Set environment variable
+export OPENAI_API_KEY=sk-your-key-here
+
+# 3. Edit config.yaml
+llm:
+  provider: "openai"  # Change from "mock"
 ```
 
 ### Embedding Providers

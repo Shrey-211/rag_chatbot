@@ -40,6 +40,9 @@ class OllamaAdapter(LLMAdapter):
         self.max_retries = max_retries
         self.default_params = default_params
         self.client = httpx.Client(timeout=timeout)
+        
+        # Validate model exists on initialization
+        self._validate_model()
 
     @retry(
         stop=stop_after_attempt(3),
@@ -209,6 +212,65 @@ class OllamaAdapter(LLMAdapter):
             logger.warning(f"Failed to get model info: {e}")
 
         return {"model": self.model, "base_url": self.base_url}
+
+    def _validate_model(self) -> None:
+        """Validate that the specified model exists in Ollama.
+        
+        Raises:
+            ValueError: If model is not found or Ollama is not accessible
+        """
+        try:
+            # Get list of available models
+            response = self.client.get(f"{self.base_url}/api/tags")
+            response.raise_for_status()
+            data = response.json()
+            
+            available_models = [m["name"] for m in data.get("models", [])]
+            
+            if not available_models:
+                raise ValueError(
+                    f"No models found in Ollama at {self.base_url}. "
+                    f"Please pull a model first:\n"
+                    f"  ollama pull {self.model}\n"
+                    f"Or use a different LLM provider in config.yaml:\n"
+                    f"  llm:\n"
+                    f"    provider: 'mock'  # For testing\n"
+                    f"    # or provider: 'openai' with your API key"
+                )
+            
+            # Check if requested model exists
+            model_found = any(
+                self.model in model or model.startswith(self.model + ":")
+                for model in available_models
+            )
+            
+            if not model_found:
+                available_list = "\n  ".join(available_models)
+                raise ValueError(
+                    f"Model '{self.model}' not found in Ollama.\n"
+                    f"Available models:\n  {available_list}\n\n"
+                    f"To fix this:\n"
+                    f"  1. Pull the model: ollama pull {self.model}\n"
+                    f"  2. Or use one of the available models above\n"
+                    f"  3. Or switch to a different provider in config.yaml"
+                )
+            
+            logger.info(f"Ollama model '{self.model}' validated successfully")
+            
+        except httpx.ConnectError:
+            raise ValueError(
+                f"Cannot connect to Ollama at {self.base_url}. "
+                f"Please ensure Ollama is running:\n"
+                f"  - Check if Ollama is installed: ollama --version\n"
+                f"  - Start Ollama if needed (it usually runs automatically)\n"
+                f"  - Or use a different provider in config.yaml"
+            )
+        except httpx.HTTPError as e:
+            if "404" not in str(e):
+                raise ValueError(
+                    f"Ollama API error at {self.base_url}: {e}\n"
+                    f"Please check your Ollama installation."
+                )
 
     def __del__(self):
         """Clean up HTTP client."""
