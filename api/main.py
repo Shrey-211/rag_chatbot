@@ -11,6 +11,7 @@ from typing import Optional
 import httpx
 from fastapi import FastAPI, File, HTTPException, UploadFile, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, Response
 
 from api.database import DocumentDatabase
 from api.models import (
@@ -265,15 +266,75 @@ async def query(request: QueryRequest):
 
         response = llm_adapter.generate(prompt)
 
-        # Build response
+        # Build response - group chunks by document
         sources = None
-        if request.include_sources:
-            sources = [
-                SourceDocument(
-                    id=r.id, content=r.content, metadata=r.metadata, score=r.score
-                )
-                for r in results
-            ]
+        if request.include_sources and results:
+            # Group chunks by document_id
+            document_chunks = {}
+            for r in results:
+                doc_id = r.metadata.get("document_id") if r.metadata else None
+                if not doc_id:
+                    # Fallback: try to extract from chunk ID
+                    if "_" in r.id:
+                        doc_id = r.id.split("_")[0]
+                    else:
+                        doc_id = r.id
+                
+                if doc_id not in document_chunks:
+                    document_chunks[doc_id] = {
+                        "chunks": [],
+                        "scores": [],
+                        "metadata": r.metadata or {}
+                    }
+                
+                document_chunks[doc_id]["chunks"].append({
+                    "id": r.id,
+                    "content": r.content[:200] + "..." if len(r.content) > 200 else r.content,
+                    "score": r.score
+                })
+                document_chunks[doc_id]["scores"].append(r.score)
+            
+            # Fetch document metadata from database
+            sources = []
+            for doc_id, doc_data in document_chunks.items():
+                # Get document info from database
+                doc_metadata = None
+                filename = None
+                content_type = None
+                has_file = False
+                
+                if doc_database:
+                    try:
+                        doc_metadata = await doc_database.get_document(doc_id)
+                        if doc_metadata:
+                            # Extract values immediately while object is valid
+                            filename = doc_metadata.filename
+                            content_type = doc_metadata.content_type
+                            file_path_str = doc_metadata.file_path
+                            # Check file existence using the string path
+                            has_file = file_path_str is not None and Path(file_path_str).exists() if file_path_str else False
+                    except Exception as e:
+                        logger.warning(f"Could not fetch document {doc_id}: {e}")
+                
+                # Fallback to metadata if database lookup failed
+                if not filename and doc_data["metadata"].get("filename"):
+                    filename = doc_data["metadata"]["filename"]
+                
+                # Calculate best score
+                best_score = max(doc_data["scores"]) if doc_data["scores"] else 0.0
+                
+                sources.append(SourceDocument(
+                    document_id=doc_id,
+                    filename=filename,
+                    content_type=content_type,
+                    score=best_score,
+                    num_chunks=len(doc_data["chunks"]),
+                    chunks=doc_data["chunks"][:3],  # Show up to 3 sample chunks
+                    has_file=has_file
+                ))
+            
+            # Sort by score descending
+            sources.sort(key=lambda x: x.score, reverse=True)
 
         return QueryResponse(
             answer=response.text,
@@ -387,21 +448,23 @@ async def index_file(file: UploadFile = File(...)):
         if not safe_filename or safe_filename in (".", ".."):
             raise HTTPException(status_code=400, detail="Invalid filename")
         
-        # Save uploaded file temporarily
+        # Save uploaded file permanently
         upload_dir = Path("data/uploads")
         upload_dir.mkdir(parents=True, exist_ok=True)
 
-        file_path = upload_dir / f"{uuid.uuid4()}_{safe_filename}"
+        # Create unique filename with document ID
+        doc_id = hashlib.md5(safe_filename.encode()).hexdigest()
+        file_extension = Path(safe_filename).suffix
+        stored_filename = f"{doc_id}{file_extension}"
+        file_path = upload_dir / stored_filename
+        
+        # Save file content
+        file_content = await file.read()
         with open(file_path, "wb") as f:
-            content = await file.read()
-            f.write(content)
+            f.write(file_content)
 
-        # Extract content
-        try:
-            extracted = extractor_factory.extract(str(file_path))
-        finally:
-            # Clean up temp file
-            file_path.unlink(missing_ok=True)
+        # Extract content for indexing
+        extracted = extractor_factory.extract(str(file_path))
 
         # Validate extracted content
         if not extracted.content or not extracted.content.strip():
@@ -417,8 +480,7 @@ async def index_file(file: UploadFile = File(...)):
         if not chunks:
             raise HTTPException(status_code=400, detail="No valid chunks created from file content")
 
-        # Create IDs and metadata
-        doc_id = hashlib.md5(safe_filename.encode()).hexdigest()
+        # Create chunk IDs and metadata
         chunk_ids = [f"{doc_id}_{i}" for i in range(len(chunks))]
 
         metadatas = []
@@ -437,11 +499,12 @@ async def index_file(file: UploadFile = File(...)):
 
         vector_store.persist()
 
-        # Save to document database
-        await doc_database.add_document(
+        # Save to document database with file path (upsert)
+        doc_record = await doc_database.add_document(
             document_id=doc_id,
             num_chunks=len(chunks),
             filename=safe_filename,
+            file_path=str(file_path),
             content_type=file.content_type,
             metadata_json=json.dumps(extracted.metadata) if extracted.metadata else None,
         )
@@ -450,7 +513,7 @@ async def index_file(file: UploadFile = File(...)):
             success=True,
             document_id=doc_id,
             num_chunks=len(chunks),
-            message=f"Successfully indexed file: {safe_filename}",
+            message=f"Successfully indexed file: {safe_filename} ({len(chunks)} chunks)",
         )
 
     except Exception as e:
@@ -479,18 +542,23 @@ async def list_documents(
         documents = await doc_database.list_documents(limit=limit, offset=offset)
         total = await doc_database.count_documents()
 
-        doc_list = [
-            DocumentInfo(
+        doc_list = []
+        for doc in documents:
+            # Extract file_path string before checking existence
+            file_path_str = doc.file_path
+            has_file = file_path_str is not None and Path(file_path_str).exists() if file_path_str else False
+            
+            doc_list.append(DocumentInfo(
                 document_id=doc.document_id,
                 filename=doc.filename,
+                file_path=file_path_str,
                 content_type=doc.content_type,
                 source=doc.source,
                 num_chunks=doc.num_chunks,
                 indexed_at=doc.indexed_at,
                 metadata=json.loads(doc.metadata_json) if doc.metadata_json else None,
-            )
-            for doc in documents
-        ]
+                has_file=has_file,
+            ))
 
         return DocumentListResponse(
             documents=doc_list,
@@ -501,6 +569,75 @@ async def list_documents(
 
     except Exception as e:
         logger.error(f"List documents error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/documents/{document_id}/file")
+async def download_document(document_id: str):
+    """View an uploaded document file in the browser.
+    
+    Args:
+        document_id: Document identifier
+        
+    Returns:
+        File response with the document displayed inline
+    """
+    if not doc_database:
+        raise HTTPException(status_code=503, detail="Database not initialized")
+    
+    try:
+        doc = await doc_database.get_document(document_id)
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        if not doc.file_path:
+            raise HTTPException(status_code=404, detail="File not available for this document")
+        
+        file_path = Path(doc.file_path)
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="File not found on disk")
+        
+        # Read file content
+        with open(file_path, "rb") as f:
+            file_content = f.read()
+        
+        # Determine media type based on file extension if not set
+        media_type = doc.content_type
+        if not media_type:
+            suffix = file_path.suffix.lower()
+            # Map common file extensions to media types that browsers can display
+            media_type_map = {
+                ".txt": "text/plain",
+                ".md": "text/markdown",
+                ".html": "text/html",
+                ".htm": "text/html",
+                ".pdf": "application/pdf",
+                ".png": "image/png",
+                ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg",
+                ".gif": "image/gif",
+                ".svg": "image/svg+xml",
+                ".json": "application/json",
+                ".xml": "application/xml",
+                ".csv": "text/csv",
+            }
+            media_type = media_type_map.get(suffix, "application/octet-stream")
+        
+        # Set Content-Disposition to inline so browser displays instead of downloads
+        # Browsers will display text, images, PDFs, etc. inline when possible
+        headers = {
+            "Content-Disposition": f"inline; filename=\"{doc.filename or 'document'}\""
+        }
+        
+        return Response(
+            content=file_content,
+            media_type=media_type,
+            headers=headers,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"View document error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

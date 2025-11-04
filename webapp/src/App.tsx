@@ -21,10 +21,13 @@ type Metadata = {
 };
 
 type SourceDocument = {
-  id: string;
-  content: string;
-  metadata: Metadata;
+  document_id: string;
+  filename?: string;
+  content_type?: string;
   score: number;
+  num_chunks: number;
+  chunks?: Array<{ id: string; content: string; score: number }>;
+  has_file: boolean;
 };
 
 type ChatMessage = {
@@ -40,6 +43,7 @@ type IndexedDocument = {
   numChunks: number;
   uploadedAt: string;
   metadata?: Metadata;
+  hasFile?: boolean;
 };
 
 type QueryApiResponse = {
@@ -92,13 +96,7 @@ const getDocumentLabel = (doc: IndexedDocument): string => {
   return "Text snippet";
 };
 
-const getSourceLabel = (source: SourceDocument): string => {
-  const candidate = source.metadata?.source;
-  if (typeof candidate === "string" && candidate.trim().length > 0) {
-    return candidate;
-  }
-  return source.id;
-};
+// Removed getSourceLabel - now using source.filename or document_id directly
 
 const App = () => {
   const [stats, setStats] = useState<StatsResponse | null>(null);
@@ -436,7 +434,20 @@ const App = () => {
                     ) : (
                       documents.map((doc) => (
                         <div key={doc.documentId} className="document-item">
-                          <div className="document-item__name">{getDocumentLabel(doc)}</div>
+                          <div className="document-item__header">
+                            <div className="document-item__name">{getDocumentLabel(doc)}</div>
+                            {doc.hasFile && (
+                              <a
+                                href={`${API_BASE_URL}/documents/${doc.documentId}/file`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="document-item__download"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                📥
+                              </a>
+                            )}
+                          </div>
                           <div className="document-item__meta">
                             {doc.numChunks} chunks • {new Date(doc.uploadedAt).toLocaleDateString()}
                           </div>
@@ -496,12 +507,39 @@ const App = () => {
                         </summary>
                         <div className="message__sources-list">
                           {message.sources.map((source) => (
-                            <div key={source.id} className="source-item">
+                            <div key={source.document_id} className="source-item">
                               <div className="source-item__header">
-                                <span className="source-item__name">{getSourceLabel(source)}</span>
-                                <span className="source-item__score">{source.score.toFixed(3)}</span>
+                                <div className="source-item__title-row">
+                                  <span className="source-item__name">
+                                    {source.filename || source.document_id.substring(0, 12)}
+                                  </span>
+                                  {source.has_file && (
+                                    <a
+                                      href={`${API_BASE_URL}/documents/${source.document_id}/file`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="source-item__download"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      📥 View
+                                    </a>
+                                  )}
+                                </div>
+                                <div className="source-item__meta">
+                                  <span className="source-item__score">Score: {source.score.toFixed(3)}</span>
+                                  <span className="source-item__chunks">{source.num_chunks} chunk{source.num_chunks !== 1 ? "s" : ""}</span>
+                                </div>
                               </div>
-                              <div className="source-item__content">{source.content.substring(0, 200)}...</div>
+                              {source.chunks && source.chunks.length > 0 && (
+                                <div className="source-item__preview">
+                                  <div className="source-item__preview-label">Preview:</div>
+                                  {source.chunks.map((chunk, idx) => (
+                                    <div key={chunk.id} className="source-item__chunk">
+                                      {chunk.content}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           ))}
                         </div>

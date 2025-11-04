@@ -261,11 +261,32 @@ body {
   background: #565869;
 }
 
+.document-item__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
 .document-item__name {
   font-size: 0.9rem;
   font-weight: 500;
   color: #ececf1;
-  margin-bottom: 0.25rem;
+  flex: 1;
+}
+
+.document-item__download {
+  font-size: 1rem;
+  text-decoration: none;
+  padding: 0.25rem;
+  border-radius: 4px;
+  transition: background 0.2s;
+  line-height: 1;
+}
+
+.document-item__download:hover {
+  background: rgba(16, 163, 127, 0.2);
 }
 
 .document-item__meta {
@@ -478,31 +499,89 @@ body {
 
 .source-item__header {
   display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.source-item__title-row {
+  display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 0.5rem;
   gap: 1rem;
 }
 
 .source-item__name {
-  font-size: 0.85rem;
+  font-size: 0.9rem;
   font-weight: 600;
   color: #ececf1;
   flex: 1;
 }
 
+.source-item__download {
+  font-size: 0.85rem;
+  color: #10a37f;
+  text-decoration: none;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+.source-item__download:hover {
+  background: rgba(16, 163, 127, 0.1);
+  text-decoration: none;
+}
+
+.source-item__meta {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  font-size: 0.8rem;
+  color: #8e8ea0;
+}
+
 .source-item__score {
-  font-size: 0.75rem;
+  font-size: 0.8rem;
   color: #8e8ea0;
   background: #343541;
   padding: 0.25rem 0.5rem;
   border-radius: 4px;
+  white-space: nowrap;
+  font-weight: 600;
 }
 
-.source-item__content {
+.source-item__chunks {
+  font-size: 0.8rem;
+  color: #8e8ea0;
+}
+
+.source-item__preview {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #565869;
+}
+
+.source-item__preview-label {
+  font-size: 0.75rem;
+  color: #8e8ea0;
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.source-item__chunk {
   font-size: 0.85rem;
   color: #c5c5d2;
   line-height: 1.5;
+  padding: 0.5rem;
+  background: #343541;
+  border-radius: 4px;
+  margin-bottom: 0.5rem;
+}
+
+.source-item__chunk:last-child {
+  margin-bottom: 0;
 }
 
 .chat-error {

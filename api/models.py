@@ -18,10 +18,13 @@ class QueryRequest(BaseModel):
 class SourceDocument(BaseModel):
     """Source document metadata."""
 
-    id: str
-    content: str
-    metadata: Dict[str, Any]
-    score: float
+    document_id: str
+    filename: Optional[str] = None
+    content_type: Optional[str] = None
+    score: float  # Best score from chunks in this document
+    num_chunks: int  # Number of relevant chunks from this document
+    chunks: Optional[List[Dict[str, Any]]] = None  # Sample chunks for preview
+    has_file: bool = False  # Whether file is available for download
 
 
 class QueryResponse(BaseModel):
@@ -82,11 +85,13 @@ class DocumentInfo(BaseModel):
 
     document_id: str
     filename: Optional[str] = None
+    file_path: Optional[str] = None
     content_type: Optional[str] = None
     source: Optional[str] = None
     num_chunks: int
     indexed_at: datetime
     metadata: Optional[Dict[str, Any]] = None
+    has_file: bool = False
 
 
 class DocumentListResponse(BaseModel):

@@ -1,17 +1,18 @@
-# Multi-stage build for React webapp
+# Multi-stage build for React webapp - Optimized for build speed
 
 # Stage 1: Development
 FROM node:18-alpine AS development
 
 WORKDIR /app
 
-# Copy package files
+# Copy package files first for better layer caching
 COPY package*.json ./
 
-# Install dependencies
-RUN npm ci
+# Install dependencies with cache mount
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --prefer-offline --no-audit
 
-# Copy source code
+# Copy source code (this layer changes most frequently)
 COPY . .
 
 # Expose Vite dev server port
@@ -29,14 +30,16 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies (including dev dependencies for build)
-RUN npm ci
+# Install dependencies with cache mount
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --prefer-offline --no-audit
 
 # Copy source code
 COPY . .
 
-# Build for production
-RUN npm run build
+# Build for production with cache mount for node_modules
+RUN --mount=type=cache,target=/app/node_modules/.vite \
+    npm run build
 
 
 # Stage 3: Production serve with nginx
@@ -53,4 +56,3 @@ EXPOSE 80
 
 # Start nginx
 CMD ["nginx", "-g", "daemon off;"]
-

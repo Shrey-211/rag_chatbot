@@ -47,20 +47,32 @@ clean:
 	rm -rf htmlcov/ .coverage build/ dist/ *.egg-info
 
 docker-build:
-	docker-compose build --no-cache
+	@echo "Building Docker images (full rebuild, no cache)..."
+	DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 docker-compose build --no-cache
 
 docker-build-fast:
-	DOCKER_BUILDKIT=1 docker-compose build --build-arg BUILDKIT_INLINE_CACHE=1
+	@echo "Building Docker images with cache (fast rebuild)..."
+	DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 docker-compose build
 
 docker-up:
-	docker-compose up -d
+	DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 docker-compose up -d
 
 docker-down:
 	docker-compose down
 
 docker-restart:
 	docker-compose down
-	DOCKER_BUILDKIT=1 docker-compose up -d --build
+	@echo "Rebuilding and starting services..."
+	DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 docker-compose up -d --build
+
+docker-logs:
+	docker-compose logs -f
+
+docker-clean:
+	@echo "Cleaning Docker build cache..."
+	docker builder prune -f
+	@echo "Removing unused images..."
+	docker image prune -f
 
 index:
 	python scripts/index_documents.py ./data/sample/
