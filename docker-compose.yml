@@ -1,0 +1,52 @@
+services:
+  # Main RAG API service
+  rag-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # Enable BuildKit cache for faster builds
+      cache_from:
+        - rag-chatbot-rag-api:latest
+    image: rag-chatbot-rag-api:latest
+    ports:
+      - "8000:8000"
+    environment:
+      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama2}
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-local}
+      - VECTORSTORE_PROVIDER=${VECTORSTORE_PROVIDER:-chroma}
+      - VECTORSTORE_PERSIST_PATH=/app/data/chroma
+    volumes:
+      - ./data:/app/data
+      # Development: Mount source code for live reload (comment out for production)
+      - ./src:/app/src
+      - ./api:/app/api
+    depends_on:
+      - chroma
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - rag-network
+    restart: unless-stopped
+
+  # ChromaDB vector store
+  chroma:
+    image: chromadb/chroma:latest
+    ports:
+      - "8001:8000"
+    volumes:
+      - chroma-data:/chroma/chroma
+    environment:
+      - IS_PERSISTENT=TRUE
+      - ANONYMIZED_TELEMETRY=FALSE
+    networks:
+      - rag-network
+    restart: unless-stopped
+
+volumes:
+  chroma-data:
+
+networks:
+  rag-network:
+    driver: bridge

@@ -1,0 +1,70 @@
+llm:
+  provider: "ollama"  # Options: ollama, openai, mock
+  ollama:
+    base_url: "http://localhost:11434"
+    model: "llama2"
+    temperature: 0.7
+    max_tokens: 1024
+  openai:
+    api_key: "${OPENAI_API_KEY}"
+    model: "gpt-3.5-turbo"
+    temperature: 0.7
+    max_tokens: 1024
+  retry:
+    max_attempts: 3
+    delay: 1.0
+    timeout: 30.0
+
+embedding:
+  provider: "local"  # Options: local, openai
+  local:
+    model: "all-MiniLM-L6-v2"
+    device: "cpu"  # or "cuda" if GPU available
+    batch_size: 32
+  openai:
+    api_key: "${OPENAI_API_KEY}"
+    model: "text-embedding-ada-002"
+
+vectorstore:
+  provider: "chroma"  # Options: chroma, faiss, memory
+  chroma:
+    persist_directory: "./data/chroma"
+    collection_name: "rag_documents"
+  faiss:
+    index_path: "./data/faiss/index.faiss"
+    metadata_path: "./data/faiss/metadata.pkl"
+  settings:
+    distance_metric: "cosine"
+
+retrieval:
+  chunk_size: 500
+  chunk_overlap: 50
+  top_k: 5
+  min_relevance_score: 0.0
+  enable_reranking: false
+
+api:
+  host: "0.0.0.0"
+  port: 8000
+  reload: true
+  cors_origins:
+    - "http://localhost:3000"
+    - "http://localhost:8000"
+
+prompts:
+  system_instruction: |
+    You are a helpful AI assistant. Answer questions based on the provided context.
+    If the context doesn't contain enough information, say so.
+  
+  rag_template: |
+    Context information is below:
+    ---------------------
+    {context}
+    ---------------------
+    
+    Given the context information and not prior knowledge, answer the question.
+    If the answer is not in the context, say "I don't have enough information to answer this question."
+    
+    Question: {query}
+    Answer:
+
