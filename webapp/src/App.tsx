@@ -120,6 +120,7 @@ const App = () => {
   
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [activeTab, setActiveTab] = useState<"chat" | "documents">("chat");
+  const [deletingDocId, setDeletingDocId] = useState<string | null>(null);
 
   const refreshStats = async () => {
     setStatsLoading(true);
@@ -265,6 +266,46 @@ const App = () => {
       setUploadError(formatError(error));
     } finally {
       setUploading(false);
+    }
+  };
+
+  const handleDeleteDocument = async (documentId: string, documentName: string) => {
+    if (!confirm(`Are you sure you want to delete "${documentName}"?\n\nThis will permanently remove:\n• The document from the database\n• The uploaded file (if exists)\n• All embeddings and chunks\n\nThis action cannot be undone.`)) {
+      return;
+    }
+
+    setDeletingDocId(documentId);
+    
+    try {
+      const response = await fetch(`${API_BASE_URL}/documents/${documentId}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        const message = await response.text();
+        throw new Error(message || `Delete failed (${response.status})`);
+      }
+
+      const data = await response.json();
+      
+      // Remove document from local state
+      setDocuments((prev) => prev.filter((doc) => doc.documentId !== documentId));
+      
+      // Refresh stats
+      refreshStats().catch((error) => console.error("Failed to refresh stats", error));
+      
+      // Show success message
+      setUploadSuccess(data.message || "Document deleted successfully");
+      setUploadError(null);
+      
+      // Clear success message after 3 seconds
+      setTimeout(() => setUploadSuccess(null), 3000);
+    } catch (error) {
+      console.error("Delete error", error);
+      setUploadError(formatError(error));
+      setUploadSuccess(null);
+    } finally {
+      setDeletingDocId(null);
     }
   };
 
@@ -436,17 +477,28 @@ const App = () => {
                         <div key={doc.documentId} className="document-item">
                           <div className="document-item__header">
                             <div className="document-item__name">{getDocumentLabel(doc)}</div>
-                            {doc.hasFile && (
-                              <a
-                                href={`${API_BASE_URL}/documents/${doc.documentId}/file`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="document-item__download"
-                                onClick={(e) => e.stopPropagation()}
+                            <div className="document-item__actions">
+                              {doc.hasFile && (
+                                <a
+                                  href={`${API_BASE_URL}/documents/${doc.documentId}/file`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="document-item__icon-button"
+                                  onClick={(e) => e.stopPropagation()}
+                                  title="View file"
+                                >
+                                  📥
+                                </a>
+                              )}
+                              <button
+                                className="document-item__icon-button document-item__icon-button--delete"
+                                onClick={() => handleDeleteDocument(doc.documentId, getDocumentLabel(doc))}
+                                disabled={deletingDocId === doc.documentId}
+                                title="Delete document"
                               >
-                                📥
-                              </a>
-                            )}
+                                {deletingDocId === doc.documentId ? "⏳" : "🗑️"}
+                              </button>
+                            </div>
                           </div>
                           <div className="document-item__meta">
                             {doc.numChunks} chunks • {new Date(doc.uploadedAt).toLocaleDateString()}

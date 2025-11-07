@@ -274,19 +274,44 @@ body {
   font-weight: 500;
   color: #ececf1;
   flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.document-item__download {
+.document-item__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.document-item__icon-button {
   font-size: 1rem;
-  text-decoration: none;
-  padding: 0.25rem;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 0.25rem 0.5rem;
   border-radius: 4px;
   transition: background 0.2s;
   line-height: 1;
+  color: inherit;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.document-item__download:hover {
+.document-item__icon-button:hover:not(:disabled) {
   background: rgba(16, 163, 127, 0.2);
+}
+
+.document-item__icon-button--delete:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.2);
+}
+
+.document-item__icon-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .document-item__meta {

@@ -3,13 +3,14 @@
 import hashlib
 import json
 import logging
+import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
 import httpx
-from fastapi import FastAPI, File, HTTPException, UploadFile, Query
+from fastapi import FastAPI, File, HTTPException, UploadFile, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 
@@ -36,6 +37,7 @@ from src.config.config import get_config, get_yaml_config
 from src.extractors.base import ExtractorFactory
 from src.retriever.retriever import Retriever
 from src.utils.chunking import chunk_text
+from src.utils.dependency_checker import DependencyChecker
 from src.utils.prompts import RAG_WITH_SYSTEM
 from src.vectorstore.base import VectorStore
 from src.vectorstore.chroma import ChromaVectorStore
@@ -134,6 +136,11 @@ async def lifespan(app: FastAPI):
     logger.info("Starting RAG application...")
 
     config = get_config()
+    
+    # Check OCR dependencies
+    logger.info("")
+    DependencyChecker.report_status(verbose=True)
+    logger.info("")
 
     # Initialize document database
     doc_database = DocumentDatabase()
@@ -154,8 +161,9 @@ async def lifespan(app: FastAPI):
         top_k=config.top_k_results,
     )
 
-    # Initialize extractor factory
-    extractor_factory = ExtractorFactory()
+    # Initialize extractor factory with OCR configuration
+    ocr_config = yaml_config.get("ocr", {})
+    extractor_factory = ExtractorFactory(ocr_config=ocr_config)
 
     logger.info("RAG application started successfully")
 
@@ -195,6 +203,26 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Request logging middleware
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """Log all incoming HTTP requests and their duration."""
+    start_time = time.time()
+    
+    # Log request
+    logger.info(f"→ {request.method} {request.url.path} from {request.client.host if request.client else 'unknown'}")
+    
+    # Process request
+    response = await call_next(request)
+    
+    # Log response
+    duration_ms = (time.time() - start_time) * 1000
+    status_emoji = "✓" if response.status_code < 400 else "✗"
+    logger.info(f"← {status_emoji} {request.method} {request.url.path} - Status: {response.status_code} - Duration: {duration_ms:.0f}ms")
+    
+    return response
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -241,9 +269,13 @@ async def query(request: QueryRequest):
     if not request.query or not request.query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")
 
+    logger.info(f"🔍 Received query: '{request.query[:100]}...' (top_k={request.top_k})")
+    
     try:
         # Retrieve relevant documents
+        logger.info(f"   Searching vector store for relevant documents...")
         results = retriever.retrieve(query=request.query, top_k=request.top_k)
+        logger.info(f"   ✓ Found {len(results)} relevant chunks")
 
         # Format context
         context = retriever.format_context(results, include_metadata=False)
@@ -264,7 +296,9 @@ async def query(request: QueryRequest):
             # TODO: Implement streaming response
             raise HTTPException(status_code=501, detail="Streaming not yet implemented")
 
+        logger.info(f"   Generating answer using {config.llm_provider}...")
         response = llm_adapter.generate(prompt)
+        logger.info(f"   ✓ Answer generated ({len(response.text)} chars)")
 
         # Build response - group chunks by document
         sources = None
@@ -357,6 +391,8 @@ async def index_document(request: IndexRequest):
     if not vector_store or not embedding_adapter:
         raise HTTPException(status_code=503, detail="Service not initialized")
 
+    logger.info(f"📄 Indexing document from {'text' if request.text else 'URL'}...")
+    
     try:
         # Get content
         if request.text:
@@ -438,6 +474,8 @@ async def index_file(file: UploadFile = File(...)):
     if not vector_store or not embedding_adapter or not extractor_factory:
         raise HTTPException(status_code=503, detail="Service not initialized")
 
+    logger.info(f"📁 Received file upload: {file.filename} ({file.content_type})")
+    
     try:
         # Validate filename
         if not file.filename:
@@ -460,17 +498,23 @@ async def index_file(file: UploadFile = File(...)):
         
         # Save file content
         file_content = await file.read()
+        file_size_kb = len(file_content) / 1024
         with open(file_path, "wb") as f:
             f.write(file_content)
+        logger.info(f"   ✓ Saved to: {file_path} ({file_size_kb:.2f} KB)")
 
         # Extract content for indexing
+        logger.info(f"   Extracting text content from {file_extension} file...")
         extracted = extractor_factory.extract(str(file_path))
+        logger.info(f"   ✓ Extracted {len(extracted.content)} characters")
 
         # Validate extracted content
         if not extracted.content or not extracted.content.strip():
+            logger.error(f"   ✗ No text content extracted from file")
             raise HTTPException(status_code=400, detail="File contains no extractable text content")
 
         # Chunk content
+        logger.info(f"   Chunking text content...")
         chunks = chunk_text(
             extracted.content,
             chunk_size=config.chunk_size,
@@ -478,6 +522,7 @@ async def index_file(file: UploadFile = File(...)):
         )
 
         if not chunks:
+            logger.error(f"   ✗ No valid chunks created")
             raise HTTPException(status_code=400, detail="No valid chunks created from file content")
 
         # Create chunk IDs and metadata
@@ -489,6 +534,7 @@ async def index_file(file: UploadFile = File(...)):
             meta["chunk_index"] = i
             meta["total_chunks"] = len(chunks)
             meta["document_id"] = doc_id
+            meta["filename"] = safe_filename
             metadatas.append(meta)
 
         # Embed and upsert
@@ -497,9 +543,11 @@ async def index_file(file: UploadFile = File(...)):
             ids=chunk_ids, embeddings=embeddings, documents=chunks, metadatas=metadatas
         )
 
+        logger.info(f"   Persisting vector store to disk...")
         vector_store.persist()
 
         # Save to document database with file path (upsert)
+        logger.info(f"   Saving metadata to document database...")
         doc_record = await doc_database.add_document(
             document_id=doc_id,
             num_chunks=len(chunks),
@@ -509,6 +557,8 @@ async def index_file(file: UploadFile = File(...)):
             metadata_json=json.dumps(extracted.metadata) if extracted.metadata else None,
         )
 
+        logger.info(f"✅ Successfully indexed file: {safe_filename} (doc_id={doc_id}, {len(chunks)} chunks)")
+        
         return IndexResponse(
             success=True,
             document_id=doc_id,
@@ -569,6 +619,94 @@ async def list_documents(
 
     except Exception as e:
         logger.error(f"List documents error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/documents/{document_id}")
+async def delete_document(document_id: str):
+    """Delete a document and all its associated data.
+    
+    This endpoint deletes:
+    1. Document metadata from the database
+    2. Uploaded file from disk (if exists)
+    3. All chunks/embeddings from the vector store
+    
+    Args:
+        document_id: Document identifier
+        
+    Returns:
+        Success message with deletion details
+    """
+    if not doc_database or not vector_store:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    
+    logger.info(f"🗑️  Deleting document: {document_id}")
+    
+    try:
+        # Step 1: Get document metadata (to find file path and num_chunks)
+        doc = await doc_database.get_document(document_id)
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        num_chunks = doc.num_chunks
+        file_path = doc.file_path
+        filename = doc.filename or document_id
+        
+        # Step 2: Delete file from disk if it exists
+        file_deleted = False
+        if file_path:
+            file_path_obj = Path(file_path)
+            if file_path_obj.exists():
+                try:
+                    file_path_obj.unlink()
+                    logger.info(f"   ✓ Deleted file from disk: {file_path}")
+                    file_deleted = True
+                except Exception as e:
+                    logger.warning(f"   ⚠ Could not delete file: {e}")
+        
+        # Step 3: Delete all chunks from vector store
+        # Generate all chunk IDs for this document
+        chunk_ids = [f"{document_id}_{i}" for i in range(num_chunks)]
+        
+        try:
+            vector_store.delete(ids=chunk_ids)
+            logger.info(f"   ✓ Deleted {len(chunk_ids)} chunks from vector store")
+        except Exception as e:
+            logger.error(f"   ✗ Error deleting chunks from vector store: {e}")
+            # Continue with database deletion even if vector store fails
+        
+        # Step 4: Delete document from database
+        db_deleted = await doc_database.delete_document(document_id)
+        if not db_deleted:
+            raise HTTPException(status_code=404, detail="Document not found in database")
+        
+        logger.info(f"   ✓ Deleted document from database")
+        
+        # Step 5: Persist vector store changes
+        try:
+            vector_store.persist()
+            logger.info(f"   ✓ Persisted vector store changes")
+        except Exception as e:
+            logger.warning(f"   ⚠ Could not persist vector store: {e}")
+        
+        logger.info(f"✅ Successfully deleted document: {filename}")
+        
+        return {
+            "success": True,
+            "document_id": document_id,
+            "message": f"Successfully deleted document: {filename}",
+            "details": {
+                "database_deleted": True,
+                "file_deleted": file_deleted,
+                "chunks_deleted": len(chunk_ids),
+                "filename": filename
+            }
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Delete error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

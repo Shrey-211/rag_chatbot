@@ -83,7 +83,9 @@ def chunk_text(
     if current_chunk:
         chunks.append(" ".join(current_chunk))
 
-    logger.debug(f"Chunked text into {len(chunks)} chunks")
+    logger.info(f"✂️  Chunking complete: Created {len(chunks)} chunks (chunk_size={chunk_size}, overlap={chunk_overlap})")
+    if chunks:
+        logger.info(f"   First chunk size: {len(chunks[0])} chars, Last chunk size: {len(chunks[-1])} chars")
     return chunks
 
 

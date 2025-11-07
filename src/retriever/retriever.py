@@ -56,9 +56,11 @@ class Retriever:
 
         try:
             # Embed query
+            logger.info(f"   Embedding query text...")
             query_embedding = self.embedding_adapter.embed_texts([query])[0]
 
             # Search vector store
+            logger.info(f"   Searching for top {top_k} similar chunks...")
             results = self.vector_store.query(
                 query_embedding=query_embedding,
                 top_k=top_k,
@@ -68,9 +70,10 @@ class Retriever:
             # Filter by minimum score
             filtered_results = [r for r in results if r.score >= self.min_score]
 
-            logger.debug(
-                f"Retrieved {len(filtered_results)} results for query (filtered from {len(results)})"
-            )
+            if filtered_results:
+                scores = [f"{r.score:.3f}" for r in filtered_results[:3]]
+                logger.info(f"   Top scores: {', '.join(scores)}")
+            
             return filtered_results
 
         except Exception as e:

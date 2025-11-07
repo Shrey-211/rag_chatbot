@@ -80,10 +80,12 @@ class ChromaVectorStore(VectorStore):
         embeddings_list = embeddings.tolist()
 
         try:
+            logger.info(f"💾 Indexing {len(ids)} chunks into ChromaDB collection '{self.collection_name}'...")
             self.collection.upsert(
                 ids=ids, embeddings=embeddings_list, documents=documents, metadatas=metadatas
             )
-            logger.debug(f"Upserted {len(ids)} documents to ChromaDB")
+            total_count = self.collection.count()
+            logger.info(f"   ✓ Successfully indexed {len(ids)} chunks. Total documents in store: {total_count}")
         except Exception as e:
             logger.error(f"ChromaDB upsert error: {e}")
             raise

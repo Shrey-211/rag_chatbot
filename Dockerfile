@@ -6,11 +6,15 @@ FROM python:3.11-slim AS base
 WORKDIR /app
 
 # Install system dependencies with cache mount
+# Includes Tesseract OCR and Poppler for image/PDF processing
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better layer caching

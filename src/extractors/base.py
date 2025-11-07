@@ -69,24 +69,48 @@ class DocumentExtractor(ABC):
 class ExtractorFactory:
     """Factory for selecting appropriate extractor based on file type."""
 
-    def __init__(self, extractors: Optional[List[DocumentExtractor]] = None):
+    def __init__(
+        self, 
+        extractors: Optional[List[DocumentExtractor]] = None,
+        ocr_config: Optional[Dict[str, Any]] = None
+    ):
         """Initialize factory with extractors.
 
         Args:
             extractors: List of extractor instances. If None, uses defaults.
+            ocr_config: Optional OCR configuration dictionary with keys:
+                       - poppler_path: Path to poppler binaries (Windows)
+                       - tesseract_path: Path to tesseract executable
+                       - ocr_language: Language code for OCR (default: 'eng')
+                       - dpi: DPI for image conversion (default: 300)
         """
         if extractors is None:
             # Avoid circular import by importing here
             from src.extractors.docx import DocxExtractor
+            from src.extractors.image import ImageExtractor
             from src.extractors.pdf import PDFExtractor
             from src.extractors.table import TableExtractor
             from src.extractors.txt import TextExtractor
 
+            # Extract OCR configuration
+            ocr_config = ocr_config or {}
+            poppler_path = ocr_config.get('poppler_path')
+            tesseract_path = ocr_config.get('tesseract_path')
+            ocr_language = ocr_config.get('ocr_language', 'eng')
+            dpi = ocr_config.get('dpi', 300)
+
             extractors = [
                 TextExtractor(),
-                PDFExtractor(),
+                PDFExtractor(
+                    ocr_enabled=True,
+                    ocr_language=ocr_language,
+                    dpi=dpi,
+                    poppler_path=poppler_path,
+                    tesseract_path=tesseract_path
+                ),
                 DocxExtractor(),
                 TableExtractor(),
+                ImageExtractor(language=ocr_language),
             ]
         self.extractors = extractors
 

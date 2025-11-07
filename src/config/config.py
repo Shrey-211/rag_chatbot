@@ -22,7 +22,7 @@ class Config(BaseSettings):
     # LLM Configuration
     llm_provider: str = Field(default="ollama", env="LLM_PROVIDER")
     ollama_base_url: str = Field(default="http://localhost:11434", env="OLLAMA_BASE_URL")
-    ollama_model: str = Field(default="llama2", env="OLLAMA_MODEL")
+    ollama_model: str = Field(default="llama3.2:1b", env="OLLAMA_MODEL")
     openai_api_key: Optional[str] = Field(default=None, env="OPENAI_API_KEY")
     openai_model: str = Field(default="gpt-3.5-turbo", env="OPENAI_MODEL")
 

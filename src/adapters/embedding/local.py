@@ -54,12 +54,20 @@ class LocalTextEmbeddingAdapter(EmbeddingAdapter):
             return np.array([]).reshape(0, self._embedding_dim)
 
         try:
+            # Only log for bulk embedding operations (not single queries)
+            if len(texts) > 1:
+                logger.info(f"🔢 Embedding {len(texts)} text chunks using {self.model_name}...")
+            
             embeddings = self.model.encode(
                 texts,
                 batch_size=self.batch_size,
                 show_progress_bar=len(texts) > 100,
                 convert_to_numpy=True,
             )
+            
+            if len(texts) > 1:
+                logger.info(f"   ✓ Generated {len(embeddings)} embeddings ({self._embedding_dim}D vectors)")
+            
             return embeddings
         except Exception as e:
             logger.error(f"Error embedding texts: {e}")

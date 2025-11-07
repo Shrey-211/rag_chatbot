@@ -9,7 +9,9 @@ A modular, production-ready RAG (Retrieval-Augmented Generation) system with plu
 ## ✨ Features
 
 - 🔌 **Pluggable Architecture**: Swap LLM providers (Ollama, OpenAI), embeddings (local, OpenAI), and vector stores (Chroma, FAISS) via configuration
-- 📚 **Multi-Format Support**: Index PDFs, DOCX, TXT, CSV, JSON files
+- 📚 **Multi-Format Support**: Index PDFs, DOCX, TXT, CSV, JSON files, and **images with OCR**
+- 🔍 **OCR Support**: Automatically extract text from scanned documents and images (JPG, PNG, TIFF, etc.)
+- 📄 **Smart PDF Handling**: Automatic detection and OCR of scanned PDFs
 - 🚀 **FastAPI Server**: RESTful API with auto-generated docs
 - 🛠️ **CLI Tools**: Command-line scripts for indexing and querying
 - 🧪 **Comprehensive Tests**: Unit and integration tests with >80% coverage
@@ -52,6 +54,14 @@ A modular, production-ready RAG (Retrieval-Augmented Generation) system with plu
 
 - Python 3.11+
 - Docker & docker-compose (optional)
+- **Tesseract OCR** (for image/scanned document processing)
+  - Windows: Download from [UB-Mannheim/tesseract](https://github.com/UB-Mannheim/tesseract/wiki)
+  - Linux: `sudo apt-get install tesseract-ocr`
+  - macOS: `brew install tesseract`
+- **Poppler** (for PDF to image conversion)
+  - Windows: Download from [poppler-windows](https://github.com/oschwartz10612/poppler-windows/releases/)
+  - Linux: `sudo apt-get install poppler-utils`
+  - macOS: `brew install poppler`
 
 ### Installation
 
@@ -113,6 +123,33 @@ curl -X POST http://localhost:8000/query \
   -H "Content-Type: application/json" \
   -d '{"query": "What is machine learning?", "top_k": 3}'
 ```
+
+### 📸 Working with Images and Scanned Documents
+
+The system automatically handles images and scanned PDFs with OCR:
+
+```bash
+# Index a scanned image
+curl -X POST http://localhost:8000/index/file \
+  -F "file=@scanned_invoice.jpg"
+
+# Index a scanned PDF
+curl -X POST http://localhost:8000/index/file \
+  -F "file=@scanned_contract.pdf"
+
+# Or use the CLI
+python scripts/index_documents.py ./data/scanned_documents/
+```
+
+**Supported Image Formats**: JPG, PNG, TIFF, BMP, GIF, WebP
+
+**Features**:
+- Automatic detection of scanned PDFs vs regular PDFs
+- OCR extraction with confidence scoring
+- Multi-language support (e.g., English + Arabic)
+- Configurable DPI for quality vs speed tradeoff
+
+**For detailed setup and configuration**, see [Image Processing Setup Guide](docs/image_processing_setup.md)
 
 ## 🧪 Test the API with Postman
 
@@ -232,7 +269,7 @@ rag_chatbot/
 │   ├── adapters/
 │   │   ├── llm/              # LLM adapters (Ollama, OpenAI, Mock)
 │   │   └── embedding/        # Embedding adapters (Local, OpenAI)
-│   ├── extractors/           # Document extractors (PDF, DOCX, TXT, CSV)
+│   ├── extractors/           # Document extractors (PDF, DOCX, TXT, CSV, Images)
 │   ├── vectorstore/          # Vector stores (Chroma, FAISS, Memory)
 │   ├── retriever/            # Retrieval logic
 │   ├── config/               # Configuration management
