@@ -42,6 +42,8 @@ class Config(BaseSettings):
     chunk_size: int = Field(default=500, env="CHUNK_SIZE")
     chunk_overlap: int = Field(default=50, env="CHUNK_OVERLAP")
     top_k_results: int = Field(default=5, env="TOP_K_RESULTS")
+    min_relevance_score: float = Field(default=0.0, env="MIN_RELEVANCE_SCORE")
+    enable_reranking: bool = Field(default=False, env="ENABLE_RERANKING")
 
     # API Configuration
     api_host: str = Field(default="0.0.0.0", env="API_HOST")
@@ -135,10 +137,84 @@ def get_config(config_path: str = "config.yaml") -> Config:
 
     if _config_instance is None:
         # Load YAML first
-        load_yaml_config(config_path)
+        yaml_config = load_yaml_config(config_path)
 
-        # Create Config instance (env vars override YAML)
-        _config_instance = Config()
+        # Extract values from YAML to override defaults
+        # Only override if not set in environment variables
+        config_overrides = {}
+        
+        # LLM configuration
+        if yaml_config.get("llm"):
+            llm = yaml_config["llm"]
+            if not os.getenv("LLM_PROVIDER"):
+                config_overrides["llm_provider"] = llm.get("provider", "ollama")
+            
+            if llm.get("ollama") and not os.getenv("OLLAMA_BASE_URL"):
+                config_overrides["ollama_base_url"] = llm["ollama"].get("base_url", "http://localhost:11434")
+            if llm.get("ollama") and not os.getenv("OLLAMA_MODEL"):
+                config_overrides["ollama_model"] = llm["ollama"].get("model", "llama3.2:1b")
+            
+            if llm.get("openai") and not os.getenv("OPENAI_MODEL"):
+                config_overrides["openai_model"] = llm["openai"].get("model", "gpt-3.5-turbo")
+        
+        # Embedding configuration
+        if yaml_config.get("embedding"):
+            emb = yaml_config["embedding"]
+            if not os.getenv("EMBEDDING_PROVIDER"):
+                config_overrides["embedding_provider"] = emb.get("provider", "local")
+            
+            if emb.get("local") and not os.getenv("EMBEDDING_MODEL"):
+                config_overrides["embedding_model"] = emb["local"].get("model", "all-MiniLM-L6-v2")
+            if emb.get("local") and not os.getenv("EMBEDDING_DEVICE"):
+                config_overrides["embedding_device"] = emb["local"].get("device", "cpu")
+        
+        # Vector store configuration
+        if yaml_config.get("vectorstore"):
+            vs = yaml_config["vectorstore"]
+            if not os.getenv("VECTORSTORE_PROVIDER"):
+                config_overrides["vectorstore_provider"] = vs.get("provider", "chroma")
+            
+            if vs.get("chroma") and not os.getenv("VECTORSTORE_PERSIST_PATH"):
+                config_overrides["vectorstore_persist_path"] = vs["chroma"].get("persist_directory", "./data/chroma")
+            if vs.get("chroma") and not os.getenv("VECTORSTORE_COLLECTION_NAME"):
+                config_overrides["vectorstore_collection_name"] = vs["chroma"].get("collection_name", "rag_documents")
+        
+        # Retrieval configuration
+        if yaml_config.get("retrieval"):
+            retr = yaml_config["retrieval"]
+            if not os.getenv("CHUNK_SIZE"):
+                config_overrides["chunk_size"] = retr.get("chunk_size", 500)
+            if not os.getenv("CHUNK_OVERLAP"):
+                config_overrides["chunk_overlap"] = retr.get("chunk_overlap", 50)
+            if not os.getenv("TOP_K_RESULTS"):
+                config_overrides["top_k_results"] = retr.get("top_k", 5)
+            if not os.getenv("MIN_RELEVANCE_SCORE"):
+                config_overrides["min_relevance_score"] = retr.get("min_relevance_score", 0.0)
+            if not os.getenv("ENABLE_RERANKING"):
+                config_overrides["enable_reranking"] = retr.get("enable_reranking", False)
+        
+        # API configuration
+        if yaml_config.get("api"):
+            api = yaml_config["api"]
+            if not os.getenv("API_HOST"):
+                config_overrides["api_host"] = api.get("host", "0.0.0.0")
+            if not os.getenv("API_PORT"):
+                config_overrides["api_port"] = api.get("port", 8000)
+            if not os.getenv("API_RELOAD"):
+                config_overrides["api_reload"] = api.get("reload", True)
+        
+        # Retry configuration
+        if yaml_config.get("llm", {}).get("retry"):
+            retry = yaml_config["llm"]["retry"]
+            if not os.getenv("MAX_RETRIES"):
+                config_overrides["max_retries"] = retry.get("max_attempts", 3)
+            if not os.getenv("RETRY_DELAY"):
+                config_overrides["retry_delay"] = retry.get("delay", 1.0)
+            if not os.getenv("REQUEST_TIMEOUT"):
+                config_overrides["request_timeout"] = retry.get("timeout", 30.0)
+
+        # Create Config instance with YAML overrides (env vars still take precedence)
+        _config_instance = Config(**config_overrides)
 
         logger.info(
             f"Configuration loaded: LLM={_config_instance.llm_provider}, "

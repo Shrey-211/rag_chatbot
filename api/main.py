@@ -55,6 +55,8 @@ vector_store: Optional[VectorStore] = None
 retriever: Optional[Retriever] = None
 extractor_factory: Optional[ExtractorFactory] = None
 doc_database: Optional[DocumentDatabase] = None
+vision_adapter: Optional["VisionAdapter"] = None
+personal_info_extractor: Optional["PersonalInfoExtractor"] = None
 
 
 def create_llm_adapter(config) -> LLMAdapter:
@@ -132,6 +134,7 @@ async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown."""
     # Startup
     global llm_adapter, embedding_adapter, vector_store, retriever, extractor_factory, doc_database
+    global vision_adapter, personal_info_extractor
 
     logger.info("Starting RAG application...")
 
@@ -159,11 +162,48 @@ async def lifespan(app: FastAPI):
         vector_store=vector_store,
         embedding_adapter=embedding_adapter,
         top_k=config.top_k_results,
+        min_score=config.min_relevance_score,
     )
 
     # Initialize extractor factory with OCR configuration
     ocr_config = yaml_config.get("ocr", {})
     extractor_factory = ExtractorFactory(ocr_config=ocr_config)
+
+    # Initialize vision adapter and personal info extractor
+    vision_config = yaml_config.get("llm", {}).get("vision", {})
+    if vision_config.get("enabled", False):
+        try:
+            from src.adapters.vision.ollama import OllamaVisionAdapter
+            from src.services.personal_info_extractor import PersonalInfoExtractor
+            
+            vision_adapter = OllamaVisionAdapter(
+                base_url=vision_config.get("base_url", "http://localhost:11434"),
+                model=vision_config.get("model", "llama3.2-vision:11b"),
+                temperature=vision_config.get("temperature", 0.1),
+                max_tokens=vision_config.get("max_tokens", 1024),
+            )
+            
+            # Check if vision model is available
+            if vision_adapter.health_check():
+                logger.info(f"✓ Vision adapter initialized: {vision_config.get('model')}")
+                
+                personal_info_extractor = PersonalInfoExtractor(
+                    vision_adapter=vision_adapter,
+                    poppler_path=ocr_config.get("poppler_path"),
+                    dpi=200,  # Lower DPI for faster processing
+                )
+                logger.info("✓ Personal information extractor initialized")
+            else:
+                logger.warning("⚠ Vision model not available. Personal info extraction disabled.")
+                logger.warning(f"   Run: ollama pull {vision_config.get('model')}")
+                vision_adapter = None
+                personal_info_extractor = None
+        except Exception as e:
+            logger.warning(f"⚠ Could not initialize vision adapter: {e}")
+            vision_adapter = None
+            personal_info_extractor = None
+    else:
+        logger.info("Vision-based personal info extraction is disabled in config")
 
     logger.info("RAG application started successfully")
 
@@ -275,10 +315,63 @@ async def query(request: QueryRequest):
         # Retrieve relevant documents
         logger.info(f"   Searching vector store for relevant documents...")
         results = retriever.retrieve(query=request.query, top_k=request.top_k)
+        
+        # Check if we got any relevant results
+        if not results:
+            logger.warning(f"   ⚠ No relevant documents found for query")
+            return QueryResponse(
+                answer="I couldn't find any relevant information in the knowledge base to answer your question. This could mean:\n\n"
+                       "1. The information isn't in the indexed documents\n"
+                       "2. The question is too different from the document content\n"
+                       "3. The documents need to be re-indexed with better settings\n\n"
+                       "Try rephrasing your question or check if relevant documents are indexed.",
+                sources=[],
+                llm_metadata={
+                    "model": config.llm_provider,
+                    "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+                },
+            )
+        
         logger.info(f"   ✓ Found {len(results)} relevant chunks")
 
-        # Format context
-        context = retriever.format_context(results, include_metadata=False)
+        # Enrich context with personal information
+        enriched_results = []
+        for result in results:
+            # Get document_id from result
+            doc_id = result.metadata.get("document_id") if result.metadata else None
+            
+            # Fetch personal info for this document
+            personal_info_text = ""
+            if doc_id and doc_database:
+                try:
+                    personal_info_records = await doc_database.get_personal_info(doc_id)
+                    if personal_info_records:
+                        # Format personal info as text to include in context
+                        info_lines = ["\n--- Extracted Personal Information from this document ---"]
+                        for record in personal_info_records:
+                            entity_label = record.entity_type.replace('_', ' ').title()
+                            info_lines.append(f"{entity_label}: {record.entity_value}")
+                        personal_info_text = "\n".join(info_lines)
+                except Exception as e:
+                    logger.warning(f"Could not fetch personal info for context: {e}")
+            
+            # Create enriched result with personal info appended
+            enriched_content = result.content
+            if personal_info_text:
+                enriched_content = result.content + personal_info_text
+            
+            # Create new result with enriched content
+            from src.vectorstore.base import SearchResult
+            enriched_result = SearchResult(
+                id=result.id,
+                content=enriched_content,
+                metadata=result.metadata,
+                score=result.score
+            )
+            enriched_results.append(enriched_result)
+        
+        # Format context with enriched results
+        context = retriever.format_context(enriched_results, include_metadata=False)
 
         # Build prompt
         yaml_cfg = get_yaml_config()
@@ -336,6 +429,7 @@ async def query(request: QueryRequest):
                 filename = None
                 content_type = None
                 has_file = False
+                personal_info_entities = None
                 
                 if doc_database:
                     try:
@@ -347,6 +441,21 @@ async def query(request: QueryRequest):
                             file_path_str = doc_metadata.file_path
                             # Check file existence using the string path
                             has_file = file_path_str is not None and Path(file_path_str).exists() if file_path_str else False
+                        
+                        # Get personal information for this document
+                        personal_info_records = await doc_database.get_personal_info(doc_id)
+                        if personal_info_records:
+                            from api.models import PersonalInfoEntity
+                            personal_info_entities = [
+                                PersonalInfoEntity(
+                                    entity_type=record.entity_type,
+                                    entity_value=record.entity_value,
+                                    confidence=record.confidence,
+                                    context=record.context,
+                                    extracted_at=record.extracted_at,
+                                )
+                                for record in personal_info_records
+                            ]
                     except Exception as e:
                         logger.warning(f"Could not fetch document {doc_id}: {e}")
                 
@@ -364,7 +473,8 @@ async def query(request: QueryRequest):
                     score=best_score,
                     num_chunks=len(doc_data["chunks"]),
                     chunks=doc_data["chunks"][:3],  # Show up to 3 sample chunks
-                    has_file=has_file
+                    has_file=has_file,
+                    personal_info=personal_info_entities,
                 ))
             
             # Sort by score descending
@@ -546,15 +656,76 @@ async def index_file(file: UploadFile = File(...)):
         logger.info(f"   Persisting vector store to disk...")
         vector_store.persist()
 
-        # Save to document database with file path (upsert)
+        # Note: We'll update the database record after vision analysis to include summary
+
+        # Extract personal information using vision model (if enabled)
+        personal_info_count = 0
+        vision_performed = False
+        document_summary = None
+        
+        if personal_info_extractor:
+            try:
+                logger.info(f"   🔍 Analyzing document with vision model...")
+                entities, raw_response, summary = personal_info_extractor.extract_from_document(str(file_path))
+                
+                # Store document summary
+                if summary:
+                    document_summary = summary
+                    logger.info(f"   ✓ Generated document summary")
+                    
+                    # Index the summary as a special chunk so it's searchable
+                    summary_chunk_id = f"{doc_id}_summary"
+                    summary_metadata = {
+                        "document_id": doc_id,
+                        "chunk_index": -1,  # Special marker for summary
+                        "total_chunks": len(chunks) + 1,
+                        "filename": safe_filename,
+                        "is_document_summary": True,
+                    }
+                    
+                    # Embed and store summary
+                    summary_embedding = embedding_adapter.embed_texts([summary])
+                    vector_store.upsert(
+                        ids=[summary_chunk_id],
+                        embeddings=summary_embedding,
+                        documents=[summary],
+                        metadatas=[summary_metadata]
+                    )
+                    logger.info(f"   ✓ Indexed document summary for semantic search")
+                
+                # Store extracted personal information
+                if entities:
+                    for entity in entities:
+                        await doc_database.add_personal_info(
+                            document_id=doc_id,
+                            entity_type=entity['entity_type'],
+                            entity_value=entity['entity_value'],
+                            confidence=entity.get('confidence'),
+                            context=entity.get('context'),
+                            raw_extraction=raw_response[:1000] if raw_response else None,
+                        )
+                    
+                    personal_info_count = len(entities)
+                    logger.info(f"   ✓ Extracted and stored {personal_info_count} personal information entities")
+                else:
+                    logger.info(f"   ℹ No personal information entities extracted")
+                
+                vision_performed = True
+                    
+            except Exception as e:
+                logger.warning(f"   ⚠ Vision analysis failed: {e}")
+                # Don't fail the entire indexing if vision extraction fails
+        
+        # Save to document database with all metadata including summary
         logger.info(f"   Saving metadata to document database...")
         doc_record = await doc_database.add_document(
             document_id=doc_id,
-            num_chunks=len(chunks),
+            num_chunks=len(chunks) + (1 if document_summary else 0),  # Include summary chunk
             filename=safe_filename,
             file_path=str(file_path),
             content_type=file.content_type,
             metadata_json=json.dumps(extracted.metadata) if extracted.metadata else None,
+            document_summary=document_summary,
         )
 
         logger.info(f"✅ Successfully indexed file: {safe_filename} (doc_id={doc_id}, {len(chunks)} chunks)")
@@ -564,6 +735,8 @@ async def index_file(file: UploadFile = File(...)):
             document_id=doc_id,
             num_chunks=len(chunks),
             message=f"Successfully indexed file: {safe_filename} ({len(chunks)} chunks)",
+            personal_info_extracted=personal_info_count if vision_performed else None,
+            vision_analysis_performed=vision_performed,
         )
 
     except Exception as e:
@@ -598,6 +771,25 @@ async def list_documents(
             file_path_str = doc.file_path
             has_file = file_path_str is not None and Path(file_path_str).exists() if file_path_str else False
             
+            # Get personal information for this document
+            personal_info_entities = None
+            try:
+                personal_info_records = await doc_database.get_personal_info(doc.document_id)
+                if personal_info_records:
+                    from api.models import PersonalInfoEntity
+                    personal_info_entities = [
+                        PersonalInfoEntity(
+                            entity_type=record.entity_type,
+                            entity_value=record.entity_value,
+                            confidence=record.confidence,
+                            context=record.context,
+                            extracted_at=record.extracted_at,
+                        )
+                        for record in personal_info_records
+                    ]
+            except Exception as e:
+                logger.warning(f"Could not fetch personal info for {doc.document_id}: {e}")
+            
             doc_list.append(DocumentInfo(
                 document_id=doc.document_id,
                 filename=doc.filename,
@@ -608,6 +800,7 @@ async def list_documents(
                 indexed_at=doc.indexed_at,
                 metadata=json.loads(doc.metadata_json) if doc.metadata_json else None,
                 has_file=has_file,
+                personal_info=personal_info_entities,
             ))
 
         return DocumentListResponse(
@@ -664,9 +857,10 @@ async def delete_document(document_id: str):
                 except Exception as e:
                     logger.warning(f"   ⚠ Could not delete file: {e}")
         
-        # Step 3: Delete all chunks from vector store
+        # Step 3: Delete all chunks from vector store (including summary)
         # Generate all chunk IDs for this document
         chunk_ids = [f"{document_id}_{i}" for i in range(num_chunks)]
+        chunk_ids.append(f"{document_id}_summary")  # Also delete summary chunk
         
         try:
             vector_store.delete(ids=chunk_ids)
@@ -675,14 +869,23 @@ async def delete_document(document_id: str):
             logger.error(f"   ✗ Error deleting chunks from vector store: {e}")
             # Continue with database deletion even if vector store fails
         
-        # Step 4: Delete document from database
+        # Step 4: Delete personal information from database
+        personal_info_deleted = 0
+        try:
+            personal_info_deleted = await doc_database.delete_personal_info(document_id)
+            if personal_info_deleted > 0:
+                logger.info(f"   ✓ Deleted {personal_info_deleted} personal info entities")
+        except Exception as e:
+            logger.warning(f"   ⚠ Could not delete personal info: {e}")
+        
+        # Step 5: Delete document from database
         db_deleted = await doc_database.delete_document(document_id)
         if not db_deleted:
             raise HTTPException(status_code=404, detail="Document not found in database")
         
         logger.info(f"   ✓ Deleted document from database")
         
-        # Step 5: Persist vector store changes
+        # Step 6: Persist vector store changes
         try:
             vector_store.persist()
             logger.info(f"   ✓ Persisted vector store changes")
@@ -699,6 +902,7 @@ async def delete_document(document_id: str):
                 "database_deleted": True,
                 "file_deleted": file_deleted,
                 "chunks_deleted": len(chunk_ids),
+                "personal_info_deleted": personal_info_deleted,
                 "filename": filename
             }
         }

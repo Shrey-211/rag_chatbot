@@ -29,6 +29,22 @@ class DocumentMetadata(Base):
     num_chunks = Column(Integer, nullable=False)
     metadata_json = Column(Text, nullable=True)
     indexed_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    document_summary = Column(Text, nullable=True)  # AI-generated document description
+
+
+class PersonalInformation(Base):
+    """Personal information extracted from documents using vision models."""
+    
+    __tablename__ = "personal_information"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    document_id = Column(String(64), nullable=False, index=True)
+    entity_type = Column(String(100), nullable=False, index=True)  # e.g., "aadhar_number", "pan_number", "name"
+    entity_value = Column(Text, nullable=False)  # The extracted value
+    confidence = Column(String(50), nullable=True)  # Confidence level if available
+    context = Column(Text, nullable=True)  # Additional context
+    extracted_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    raw_extraction = Column(Text, nullable=True)  # Raw JSON from vision model
 
 
 class DocumentDatabase:
@@ -74,7 +90,7 @@ class DocumentDatabase:
             conn: SQLAlchemy connection
         """
         try:
-            # Check if file_path column exists
+            # Check existing columns
             result = await conn.execute(text("PRAGMA table_info(documents)"))
             columns = [row[1] for row in result.fetchall()]
             
@@ -85,10 +101,114 @@ class DocumentDatabase:
                     "ALTER TABLE documents ADD COLUMN file_path VARCHAR(512)"
                 ))
                 logger.info("Migration: file_path column added successfully")
+            
+            # Add document_summary column if it doesn't exist
+            if "document_summary" not in columns:
+                logger.info("Adding document_summary column to documents table...")
+                await conn.execute(text(
+                    "ALTER TABLE documents ADD COLUMN document_summary TEXT"
+                ))
+                logger.info("Migration: document_summary column added successfully")
         except Exception as e:
             logger.error(f"Migration error: {e}")
             # Don't fail initialization if migration fails
             pass
+    
+    async def add_personal_info(
+        self,
+        document_id: str,
+        entity_type: str,
+        entity_value: str,
+        confidence: Optional[str] = None,
+        context: Optional[str] = None,
+        raw_extraction: Optional[str] = None,
+    ) -> PersonalInformation:
+        """Add extracted personal information.
+        
+        Args:
+            document_id: Document identifier
+            entity_type: Type of personal information (e.g., "aadhar_number")
+            entity_value: Extracted value
+            confidence: Confidence level
+            context: Additional context
+            raw_extraction: Raw extraction JSON
+            
+        Returns:
+            Created PersonalInformation object
+        """
+        async with self.async_session() as session:
+            async with session.begin():
+                info = PersonalInformation(
+                    document_id=document_id,
+                    entity_type=entity_type,
+                    entity_value=entity_value,
+                    confidence=confidence,
+                    context=context,
+                    raw_extraction=raw_extraction,
+                )
+                session.add(info)
+            return info
+    
+    async def get_personal_info(self, document_id: str) -> List[PersonalInformation]:
+        """Get all personal information for a document.
+        
+        Args:
+            document_id: Document identifier
+            
+        Returns:
+            List of PersonalInformation objects
+        """
+        async with self.async_session() as session:
+            stmt = select(PersonalInformation).where(
+                PersonalInformation.document_id == document_id
+            )
+            result = await session.execute(stmt)
+            return list(result.scalars().all())
+    
+    async def search_personal_info(
+        self, entity_type: Optional[str] = None, entity_value: Optional[str] = None
+    ) -> List[PersonalInformation]:
+        """Search personal information by type or value.
+        
+        Args:
+            entity_type: Filter by entity type
+            entity_value: Search by entity value (case-insensitive)
+            
+        Returns:
+            List of PersonalInformation objects
+        """
+        async with self.async_session() as session:
+            stmt = select(PersonalInformation)
+            
+            if entity_type:
+                stmt = stmt.where(PersonalInformation.entity_type == entity_type)
+            if entity_value:
+                stmt = stmt.where(PersonalInformation.entity_value.ilike(f"%{entity_value}%"))
+            
+            result = await session.execute(stmt)
+            return list(result.scalars().all())
+    
+    async def delete_personal_info(self, document_id: str) -> int:
+        """Delete all personal information for a document.
+        
+        Args:
+            document_id: Document identifier
+            
+        Returns:
+            Number of records deleted
+        """
+        async with self.async_session() as session:
+            async with session.begin():
+                stmt = select(PersonalInformation).where(
+                    PersonalInformation.document_id == document_id
+                )
+                result = await session.execute(stmt)
+                records = result.scalars().all()
+                
+                for record in records:
+                    await session.delete(record)
+                
+                return len(list(records))
 
     async def add_document(
         self,
@@ -99,6 +219,7 @@ class DocumentDatabase:
         content_type: Optional[str] = None,
         source: Optional[str] = None,
         metadata_json: Optional[str] = None,
+        document_summary: Optional[str] = None,
     ) -> DocumentMetadata:
         """Add or update a document in the database (upsert).
 
@@ -110,6 +231,7 @@ class DocumentDatabase:
             content_type: MIME type
             source: Source description
             metadata_json: JSON string of additional metadata
+            document_summary: AI-generated summary/description of document
 
         Returns:
             Created or updated DocumentMetadata object
@@ -130,6 +252,7 @@ class DocumentDatabase:
                     existing_doc.source = source
                     existing_doc.num_chunks = num_chunks
                     existing_doc.metadata_json = metadata_json
+                    existing_doc.document_summary = document_summary
                     existing_doc.indexed_at = datetime.utcnow()
                     doc = existing_doc
                 else:
@@ -143,6 +266,7 @@ class DocumentDatabase:
                         source=source,
                         num_chunks=num_chunks,
                         metadata_json=metadata_json,
+                        document_summary=document_summary,
                     )
                     session.add(doc)
                 # Commit is handled automatically by session.begin() context manager

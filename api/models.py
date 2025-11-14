@@ -15,6 +15,16 @@ class QueryRequest(BaseModel):
     stream: bool = Field(default=False, description="Stream the response")
 
 
+class PersonalInfoEntity(BaseModel):
+    """Extracted personal information entity."""
+    
+    entity_type: str
+    entity_value: str
+    confidence: Optional[str] = None
+    context: Optional[str] = None
+    extracted_at: Optional[datetime] = None
+
+
 class SourceDocument(BaseModel):
     """Source document metadata."""
 
@@ -25,6 +35,7 @@ class SourceDocument(BaseModel):
     num_chunks: int  # Number of relevant chunks from this document
     chunks: Optional[List[Dict[str, Any]]] = None  # Sample chunks for preview
     has_file: bool = False  # Whether file is available for download
+    personal_info: Optional[List[PersonalInfoEntity]] = None  # Extracted personal information
 
 
 class QueryResponse(BaseModel):
@@ -58,6 +69,8 @@ class IndexResponse(BaseModel):
     document_id: str
     num_chunks: int
     message: str
+    personal_info_extracted: Optional[int] = None  # Number of personal info entities extracted
+    vision_analysis_performed: bool = False
 
 
 class HealthResponse(BaseModel):
@@ -92,6 +105,7 @@ class DocumentInfo(BaseModel):
     indexed_at: datetime
     metadata: Optional[Dict[str, Any]] = None
     has_file: bool = False
+    personal_info: Optional[List[PersonalInfoEntity]] = None
 
 
 class DocumentListResponse(BaseModel):

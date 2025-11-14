@@ -71,7 +71,7 @@ Answer:"""
 
 
 # Pre-defined templates
-DEFAULT_SYSTEM_INSTRUCTION = """You are a helpful AI assistant. Answer questions based on the provided context.
+DEFAULT_SYSTEM_INSTRUCTION = """You are a helpful AI assistant. Answer questions based ONLY on the provided context.
 If the context doesn't contain enough information to answer the question, say so clearly.
 Be concise and accurate in your responses."""
 
@@ -79,15 +79,23 @@ Be concise and accurate in your responses."""
 RAG_TEMPLATE = PromptTemplate.default_rag_template()
 
 RAG_WITH_SYSTEM = PromptTemplate(
-    f"""{DEFAULT_SYSTEM_INSTRUCTION}
+    """You are a helpful AI assistant. Your task is to answer the question using ONLY the information provided in the context below.
 
-Context information is below:
+IMPORTANT INSTRUCTIONS:
+- Use ONLY the information from the context to answer
+- Quote relevant parts from the context when possible
+- If the context contains relevant information, provide a detailed answer
+- If the answer is NOT in the context, respond with: "I don't have enough information in the provided context to answer this question."
+- Do NOT use your prior knowledge or make assumptions
+
+CONTEXT:
 ---------------------
-{{context}}
+{context}
 ---------------------
 
-Question: {{query}}
-Answer:"""
+QUESTION: {query}
+
+ANSWER (using only the context above):"""
 )
 
 CHAT_TEMPLATE = PromptTemplate(

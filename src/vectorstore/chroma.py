@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import chromadb
 import numpy as np
@@ -87,8 +87,40 @@ class ChromaVectorStore(VectorStore):
             total_count = self.collection.count()
             logger.info(f"   ✓ Successfully indexed {len(ids)} chunks. Total documents in store: {total_count}")
         except Exception as e:
-            logger.error(f"ChromaDB upsert error: {e}")
-            raise
+            error_msg = str(e)
+            # Check if this is a dimension mismatch error
+            if "expecting embedding with dimension" in error_msg.lower() and "got" in error_msg.lower():
+                logger.warning(f"⚠️  Embedding dimension mismatch detected!")
+                logger.warning(f"   Error: {error_msg}")
+                logger.warning(f"   This happens when you change the embedding model.")
+                logger.warning(f"   Recreating collection '{self.collection_name}' with new dimensions...")
+                
+                # Delete the old collection
+                try:
+                    self.client.delete_collection(name=self.collection_name)
+                    logger.info(f"   ✓ Deleted old collection")
+                except Exception as del_error:
+                    logger.warning(f"   Could not delete old collection: {del_error}")
+                
+                # Recreate the collection
+                metadata = {"hnsw:space": self.distance_metric}
+                self.collection = self.client.get_or_create_collection(
+                    name=self.collection_name, metadata=metadata
+                )
+                logger.info(f"   ✓ Recreated collection with new embedding dimensions")
+                
+                # Retry the upsert
+                logger.info(f"💾 Retrying: Indexing {len(ids)} chunks into ChromaDB collection '{self.collection_name}'...")
+                self.collection.upsert(
+                    ids=ids, embeddings=embeddings_list, documents=documents, metadatas=metadatas
+                )
+                total_count = self.collection.count()
+                logger.info(f"   ✓ Successfully indexed {len(ids)} chunks. Total documents in store: {total_count}")
+                logger.warning(f"   ⚠️  NOTE: All previous documents were deleted during collection recreation.")
+                logger.warning(f"   ⚠️  You may need to re-upload any other documents you had indexed.")
+            else:
+                logger.error(f"ChromaDB upsert error: {e}")
+                raise
 
     def query(
         self, query_embedding: np.ndarray, top_k: int = 5, filter_dict: Optional[Dict] = None

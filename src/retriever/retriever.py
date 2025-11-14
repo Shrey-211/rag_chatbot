@@ -69,10 +69,13 @@ class Retriever:
 
             # Filter by minimum score
             filtered_results = [r for r in results if r.score >= self.min_score]
-
+            
+            # Log results
             if filtered_results:
                 scores = [f"{r.score:.3f}" for r in filtered_results[:3]]
-                logger.info(f"   Top scores: {', '.join(scores)}")
+                logger.info(f"   ✓ Found {len(filtered_results)} chunks (scores: {', '.join(scores)})")
+            else:
+                logger.warning(f"   ⚠ No chunks passed threshold (min_score={self.min_score})")
             
             return filtered_results
 
