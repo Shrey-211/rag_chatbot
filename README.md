@@ -4,7 +4,15 @@ A modular, production-ready RAG (Retrieval-Augmented Generation) system with plu
 
 [![CI](https://github.com/yourusername/rag_chatbot/workflows/CI/badge.svg)](https://github.com/yourusername/rag_chatbot/actions)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+---
+
+## 🚀 **New Here? Start with the [Complete Setup Guide](SETUP_GUIDE.md)!**
+
+The [SETUP_GUIDE.md](SETUP_GUIDE.md) provides step-by-step instructions for beginners - from installing Python to running your first query. Perfect if you're new to programming or RAG systems!
+
+---
 
 ## ✨ Features
 
@@ -50,25 +58,64 @@ A modular, production-ready RAG (Retrieval-Augmented Generation) system with plu
 
 ## 🚀 Quick Start
 
-### Prerequisites
+### 📖 First Time Setup
 
-- Python 3.11+
-- Docker & docker-compose (optional)
-- **Tesseract OCR** (for image/scanned document processing)
-  - Windows: Download from [UB-Mannheim/tesseract](https://github.com/UB-Mannheim/tesseract/wiki)
+**👉 If you're new to this project, follow the [Complete Setup Guide](SETUP_GUIDE.md) for detailed, beginner-friendly instructions!**
+
+The setup guide covers:
+- Installing Python 3.11+
+- Installing Node.js 18+ (for web interface)
+- Setting up Ollama (local AI)
+- Installing OCR tools (Tesseract & Poppler)
+- Complete configuration walkthrough
+- Testing and troubleshooting
+
+### Prerequisites (Quick Reference)
+
+- **Python:** 3.11 or higher
+- **Node.js:** 18 or higher (for web interface)
+- **Ollama:** For local AI models ([ollama.ai](https://ollama.ai))
+- **Tesseract OCR:** For image/scanned document processing
+  - Windows: [UB-Mannheim/tesseract](https://github.com/UB-Mannheim/tesseract/wiki)
   - Linux: `sudo apt-get install tesseract-ocr`
   - macOS: `brew install tesseract`
-- **Poppler** (for PDF to image conversion)
-  - Windows: Download from [poppler-windows](https://github.com/oschwartz10612/poppler-windows/releases/)
+- **Poppler:** For PDF to image conversion
+  - Windows: [poppler-windows](https://github.com/oschwartz10612/poppler-windows/releases/)
   - Linux: `sudo apt-get install poppler-utils`
   - macOS: `brew install poppler`
 
 ### Installation
 
+#### Quick Setup (Automated)
+
+Use our quickstart script to automate the setup:
+
+```bash
+# Windows
+scripts\quickstart.bat
+
+# macOS/Linux
+chmod +x scripts/quickstart.sh
+./scripts/quickstart.sh
+```
+
+The script will check prerequisites, set up the environment, and guide you through the next steps.
+
+#### Manual Setup
+
 ```bash
 # Clone repository
 git clone <repo-url>
 cd rag_chatbot
+
+# Create virtual environment
+python -m venv venv
+
+# Activate virtual environment
+# Windows
+venv\Scripts\activate
+# macOS/Linux
+source venv/bin/activate
 
 # Install dependencies
 pip install -r requirements.txt
@@ -372,10 +419,20 @@ See [Embedding Guide](docs/embedding_guide.md) for implementation details.
 
 ## 📚 Documentation
 
+### Getting Started
+- **[Complete Setup Guide](SETUP_GUIDE.md)** - 📖 Start here! Beginner-friendly setup instructions
+- [Quick Start](#-quick-start) - Fast setup for experienced developers
+
+### Advanced Topics
 - [Architecture Overview](docs/architecture.md) - System design and components
-- [Getting Started](docs/getting_started.md) - Detailed setup guide
+- [Project Structure](docs/PROJECT_STRUCTURE.md) - Detailed codebase organization
 - [Switching Providers](docs/switching_providers.md) - Configuration guide
 - [Embedding Guide](docs/embedding_guide.md) - Embedding models and optimization
+- [Image Processing Setup](docs/image_processing_setup.md) - OCR configuration
+
+### Reference
+- [API Documentation](http://localhost:8000/docs) - Interactive API docs (when server is running)
+- [LICENSE](LICENSE) - MIT License details
 
 ## 🧪 Testing
 
@@ -422,17 +479,36 @@ See `.env.example` for all options.
 
 ## 🤝 Contributing
 
+We love contributions! Whether you're fixing bugs, adding features, or improving documentation, your help is welcome.
+
+**Please read our [Contributing Guide](CONTRIBUTING.md) to get started.**
+
+Quick steps:
 1. Fork the repository
 2. Create feature branch: `git checkout -b feature/amazing-feature`
 3. Make changes and add tests
-4. Run checks: `make all`
-5. Commit: `git commit -m 'Add amazing feature'`
+4. Run checks: `make all` or `pytest tests/`
+5. Commit with clear message: `git commit -m 'Add amazing feature'`
 6. Push: `git push origin feature/amazing-feature`
-7. Open Pull Request
+7. Open a Pull Request
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines on:
+- Setting up your development environment
+- Code style and standards
+- Writing tests
+- Submitting pull requests
+- Getting help
 
 ## 📄 License
 
-MIT License - see [LICENSE](LICENSE) file for details
+This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
+
+**What this means:**
+- ✅ Free to use for personal and commercial projects
+- ✅ Modify and distribute as you like
+- ✅ Private use allowed
+- ⚠️ No warranty provided
+- ℹ️ Must include license and copyright notice
 
 ## 🙏 Acknowledgments
 
@@ -441,10 +517,13 @@ MIT License - see [LICENSE](LICENSE) file for details
 - [Sentence Transformers](https://www.sbert.net/) - Embedding models
 - [FastAPI](https://fastapi.tiangolo.com/) - Modern web framework
 
-## 📞 Support
+## 📞 Support & Community
 
-- **Issues**: [GitHub Issues](https://github.com/yourusername/rag_chatbot/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/yourusername/rag_chatbot/discussions)
+- **Issues:** [GitHub Issues](https://github.com/yourusername/rag_chatbot/issues) - Report bugs or request features
+- **Discussions:** [GitHub Discussions](https://github.com/yourusername/rag_chatbot/discussions) - Ask questions, share ideas
+- **Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md) - Learn how to contribute
+- **Code of Conduct:** [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) - Our community standards
+- **Security:** [SECURITY.md](SECURITY.md) - Security policy and best practices
 
 ## 🗺️ Roadmap
 
